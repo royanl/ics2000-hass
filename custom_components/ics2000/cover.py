@@ -194,15 +194,18 @@ class KlikAanKlikUitCover(CoverEntity):
         """Stop the cover movement."""
         _LOGGER.info(f'Stopping cover {self._name}')
         
-        # Voor KlikAanKlikUit: stop door tegenovergestelde signaal te sturen
+        # Voor KlikAanKlikUit: stop door hetzelfde signaal nogmaals te sturen
         if self._is_opening:
-            # Als het omhoog gaat, stuur omlaag signaal om te stoppen
-            hub_function = self._hub.turn_off
-        elif self._is_closing:
-            # Als het omlaag gaat, stuur omhoog signaal om te stoppen
+            # Als het omhoog gaat (turn_on), stuur turn_on nogmaals om te stoppen
             hub_function = self._hub.turn_on
+            stop_action = 'stop_opening'
+        elif self._is_closing:
+            # Als het omlaag gaat (turn_off), stuur turn_off nogmaals om te stoppen
+            hub_function = self._hub.turn_off
+            stop_action = 'stop_closing'
         else:
             # Als het al gestopt is, doe niets
+            _LOGGER.info(f'Cover {self._name} is not moving, no stop needed')
             return
         
         KlikAanKlikUitCoverThread(
@@ -210,7 +213,7 @@ class KlikAanKlikUitCover(CoverEntity):
             device_id=self._id,
             target=self._execute_cover_action,
             kwargs={
-                'action': 'stop',
+                'action': stop_action,
                 'hub_function': hub_function
             }
         ).start()
@@ -221,15 +224,21 @@ class KlikAanKlikUitCover(CoverEntity):
             _LOGGER.info(f'Executing cover action {action} for {self._name}')
             
             if action == 'open':
-                # Zonnescherm omhoog
+                # Zonnescherm omhoog (turn_on)
                 self._hub.turn_on(entity=self._id)
                 
             elif action == 'close':
-                # Zonnescherm omlaag
+                # Zonnescherm omlaag (turn_off)
                 self._hub.turn_off(entity=self._id)
                 
-            elif action == 'stop' and hub_function:
-                # Stop door tegenovergestelde signaal
+            elif action == 'stop_opening' and hub_function:
+                # Stop omhoog beweging door turn_on nogmaals te sturen
+                _LOGGER.info(f'Stopping upward movement by sending turn_on again')
+                hub_function(entity=self._id)
+                
+            elif action == 'stop_closing' and hub_function:
+                # Stop omlaag beweging door turn_off nogmaals te sturen  
+                _LOGGER.info(f'Stopping downward movement by sending turn_off again')
                 hub_function(entity=self._id)
                 
         except Exception as e:
@@ -240,7 +249,7 @@ class KlikAanKlikUitCover(CoverEntity):
             self._is_closing = False
             
             # Na stop weten we niet meer wat de positie is
-            if action == 'stop':
+            if action.startswith('stop'):
                 self._is_closed = None
             elif action == 'open':
                 self._is_closed = False
