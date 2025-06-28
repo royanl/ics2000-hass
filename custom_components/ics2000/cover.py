@@ -195,17 +195,35 @@ class KlikAanKlikUitCover(CoverEntity):
         _LOGGER.info(f'Stopping cover {self._name}')
         
         # Voor KlikAanKlikUit: stop door hetzelfde signaal nogmaals te sturen
+        # We forceren altijd een stop actie, ongeacht de status
         if self._is_opening:
-            # Als het omhoog gaat (turn_on), stuur turn_on nogmaals om te stoppen
+            # Als het omhoog gaat, stuur turn_on nogmaals om te stoppen
             hub_function = self._hub.turn_on
             stop_action = 'stop_opening'
+            _LOGGER.info(f'Stopping upward movement')
         elif self._is_closing:
-            # Als het omlaag gaat (turn_off), stuur turn_off nogmaals om te stoppen
+            # Als het omlaag gaat, stuur turn_off nogmaals om te stoppen
             hub_function = self._hub.turn_off
             stop_action = 'stop_closing'
+            _LOGGER.info(f'Stopping downward movement')
         else:
-            # Als het al gestopt is, doe niets
-            _LOGGER.info(f'Cover {self._name} is not moving, no stop needed')
+            # Zelfs als we denken dat het gestopt is, probeer beide stop signalen
+            _LOGGER.info(f'Cover status unknown, trying both stop signals')
+            # Probeer eerst turn_on (voor het geval het omhoog ging)
+            try:
+                self._hub.turn_on(entity=self._id)
+            except:
+                pass
+            # Dan turn_off (voor het geval het omlaag ging)
+            try:
+                self._hub.turn_off(entity=self._id)
+            except:
+                pass
+            # Reset status
+            self._is_opening = False
+            self._is_closing = False
+            self._is_closed = None
+            self.schedule_update_ha_state()
             return
         
         KlikAanKlikUitCoverThread(
@@ -226,10 +244,18 @@ class KlikAanKlikUitCover(CoverEntity):
             if action == 'open':
                 # Zonnescherm omhoog (turn_on)
                 self._hub.turn_on(entity=self._id)
+                # NIET meteen status resetten - blijf _is_opening = True
+                self._is_closed = False
+                self.schedule_update_ha_state()
+                return  # Exit vroeg, geen finally blok
                 
             elif action == 'close':
                 # Zonnescherm omlaag (turn_off)
                 self._hub.turn_off(entity=self._id)
+                # NIET meteen status resetten - blijf _is_closing = True
+                self._is_closed = True
+                self.schedule_update_ha_state()
+                return  # Exit vroeg, geen finally blok
                 
             elif action == 'stop_opening' and hub_function:
                 # Stop omhoog beweging door turn_on nogmaals te sturen
@@ -244,20 +270,13 @@ class KlikAanKlikUitCover(CoverEntity):
         except Exception as e:
             _LOGGER.error(f'Error executing cover action {action} for {self._name}: {e}')
         finally:
-            # Reset states na actie
-            self._is_opening = False
-            self._is_closing = False
-            
-            # Na stop weten we niet meer wat de positie is
+            # Alleen voor stop acties: reset states
             if action.startswith('stop'):
-                self._is_closed = None
-            elif action == 'open':
-                self._is_closed = False
-            elif action == 'close':
-                self._is_closed = True
-                
-            self.schedule_update_ha_state()
-            _LOGGER.info(f'Cover action {action} completed for {self._name}')
+                self._is_opening = False
+                self._is_closing = False
+                self._is_closed = None  # Onbekende positie na stop
+                self.schedule_update_ha_state()
+                _LOGGER.info(f'Cover action {action} completed for {self._name}')
 
     def update(self) -> None:
         """Update cover state."""
